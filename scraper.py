@@ -1,17 +1,18 @@
 """
 scraper.py — Fetch recent posts from Instagram public accounts.
-Uses instaloader with optional login for better rate-limit resilience.
+Uses instagrapi under the hood, with session persistence to avoid re-logins.
 """
 
 import logging
-import sys
 import time
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
-import instaloader
+from instagrapi import Client
+from instagrapi.exceptions import LoginRequired, ClientError, ChallengeRequired
 
 import config
 
@@ -25,117 +26,124 @@ class InstagramPost:
     post_id: str
     username: str
     caption: str
-    taken_at: datetime                # timezone-aware UTC
-    media_type: str                   # "photo" | "video" | "carousel"
-    media_urls: list[str] = field(default_factory=list)
-    thumbnail_url: Optional[str] = None
-    shortcode: str = ""
+    taken_at: datetime                  # timezone-aware UTC
+    media_type: str                     # "photo" | "video" | "carousel"
+    media_urls: list[str] = field(default_factory=list)   # direct download URLs
+    thumbnail_url: Optional[str] = None                   # for videos
+    shortcode: str = ""                                    # for building profile link
 
     @property
     def permalink(self) -> str:
         return f"https://www.instagram.com/p/{self.shortcode}/"
 
 
-# ── Loader singleton ──────────────────────────────────────────────────────────
+# ── Client singleton ──────────────────────────────────────────────────────────
 
-_loader: Optional[instaloader.Instaloader] = None
+_client: Optional[Client] = None
 
 
-def _get_loader() -> instaloader.Instaloader:
-    global _loader
-    if _loader is not None:
-        return _loader
+def _get_client() -> Client:
+    global _client
+    if _client is not None:
+        return _client
 
-    L = instaloader.Instaloader(
-        download_pictures=False,
-        download_videos=False,
-        download_video_thumbnails=False,
-        download_geotags=False,
-        download_comments=False,
-        save_metadata=False,
-        compress_json=False,
-        quiet=True,
-        sleep=True,
-        max_connection_attempts=3,
-    )
+    cl = Client()
+    cl.delay_range = [1, 3]  # random delays between requests
 
-    session_file = Path(config.IG_SESSION_FILE) if config.IG_USERNAME else None
+    if config.PROXY:
+        cl.set_proxy(config.PROXY)
 
-    if config.IG_USERNAME and config.IG_PASSWORD:
-        # Try loading a saved session first
-        if session_file and session_file.exists():
-            try:
-                L.load_session_from_file(config.IG_USERNAME, session_file)
-                logger.info("Instaloader: loaded saved session for @%s.", config.IG_USERNAME)
-                _loader = L
-                return _loader
-            except Exception as exc:
-                logger.warning("Could not load saved session: %s. Logging in fresh.", exc)
+    session_path = Path(config.IG_SESSION_FILE)
 
-        # Fresh login
+    # Try to reuse a saved session first
+    if session_path.exists():
         try:
-            L.login(config.IG_USERNAME, config.IG_PASSWORD)
-            logger.info("Instaloader: logged in as @%s.", config.IG_USERNAME)
-            if session_file:
-                L.save_session_to_file(session_file)
-                logger.info("Session saved to %s.", session_file)
-        except instaloader.exceptions.BadCredentialsException:
-            logger.error(
-                "Bad Instagram credentials. Check IG_USERNAME/IG_PASSWORD in .env."
-            )
-            sys.exit(1)
-        except instaloader.exceptions.TwoFactorAuthRequiredException:
-            code = input(
-                f"\n🔑  2FA code required for @{config.IG_USERNAME}: "
-            ).strip()
-            L.two_factor_login(code)
-            if session_file:
-                L.save_session_to_file(session_file)
+            cl.load_settings(session_path)
+            cl.login(config.IG_USERNAME, config.IG_PASSWORD)
+            logger.info("Logged in using saved session.")
+            _client = cl
+            return _client
+        except ChallengeRequired:
+            _raise_challenge_error()
         except Exception as exc:
-            logger.warning(
-                "Instagram login failed (%s). Proceeding without login "
-                "(may hit rate limits sooner).",
-                exc,
-            )
-    else:
-        logger.info("Instaloader initialised (no login — public profiles only).")
+            logger.warning("Saved session invalid (%s), re-logging in.", exc)
+            session_path.unlink(missing_ok=True)
 
-    _loader = L
-    return _loader
+    # Fresh login
+    try:
+        cl.login(config.IG_USERNAME, config.IG_PASSWORD)
+    except ChallengeRequired:
+        _raise_challenge_error()
+
+    cl.dump_settings(session_path)
+    logger.info("Logged in fresh and session saved.")
+    _client = cl
+    return _client
 
 
-# ── Post converter ────────────────────────────────────────────────────────────
+def _raise_challenge_error():
+    """
+    Instagram requires a security challenge (new IP / device).
+    Print a clear, actionable message and exit — no point retrying automatically.
+    """
+    msg = (
+        "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "❌  Instagram Security Challenge Required\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Instagram blocked the login because it doesn't recognise\n"
+        "this server's IP address.\n\n"
+        "Fix: copy your local session.json (which Instagram already\n"
+        "trusts) to the server:\n\n"
+        "  scp /path/to/Insta-to-Telegram/session.json \\\n"
+        "      user@YOUR_SERVER:/path/to/Insta-to-Telegram/session.json\n\n"
+        "Then re-run the bot on the server.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    logger.error(msg)
+    raise SystemExit(1)
 
-def _post_to_dataclass(post: instaloader.Post, username: str) -> InstagramPost:
-    taken_at = post.date_utc.replace(tzinfo=timezone.utc)
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _media_to_post(media, username: str) -> InstagramPost:
+    """Convert an instagrapi Media object → our InstagramPost dataclass."""
+    taken_at: datetime = media.taken_at
+    if taken_at.tzinfo is None:
+        taken_at = taken_at.replace(tzinfo=timezone.utc)
+
+    media_type_id = media.media_type  # 1=photo, 2=video, 8=carousel
     media_urls: list[str] = []
     thumbnail_url: Optional[str] = None
 
-    if post.is_video:
-        kind = "video"
-        media_urls = [post.video_url]
-        thumbnail_url = post.url
-    elif post.typename == "GraphSidecar":
-        kind = "carousel"
-        for node in post.get_sidecar_nodes():
-            if node.is_video:
-                media_urls.append(node.video_url)
-            else:
-                media_urls.append(node.display_url)
-    else:
+    if media_type_id == 1:  # Photo
         kind = "photo"
-        media_urls = [post.url]
+        media_urls = [str(media.thumbnail_url or "")]
+    elif media_type_id == 2:  # Video
+        kind = "video"
+        media_urls = [str(media.video_url or "")]
+        thumbnail_url = str(media.thumbnail_url or "")
+    elif media_type_id == 8:  # Carousel / album
+        kind = "carousel"
+        for resource in media.resources:
+            if resource.media_type == 2:
+                media_urls.append(str(resource.video_url or ""))
+            else:
+                media_urls.append(str(resource.thumbnail_url or ""))
+    else:
+        kind = "unknown"
+
+    caption = media.caption_text or ""
 
     return InstagramPost(
-        post_id=post.shortcode,
+        post_id=str(media.pk),
         username=username,
-        caption=post.caption or "",
+        caption=caption,
         taken_at=taken_at,
         media_type=kind,
         media_urls=[u for u in media_urls if u],
         thumbnail_url=thumbnail_url,
-        shortcode=post.shortcode,
+        shortcode=media.code or "",
     )
 
 
@@ -146,50 +154,58 @@ def fetch_recent_posts(username: str, lookback_hours: float = 24) -> list[Instag
     Return posts from `username` published within the last `lookback_hours`.
     Returns an empty list on error (logs the exception).
     """
-    L = _get_loader()
+    cl = _get_client()
     cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
 
     try:
-        profile = instaloader.Profile.from_username(L.context, username)
-    except instaloader.exceptions.ProfileNotExistsException:
-        logger.error("Instagram profile @%s does not exist.", username)
+        user_id = cl.user_id_from_username(username)
+        # Fetch up to 30 recent posts; filter by time
+        medias = cl.user_medias(user_id, amount=30)
+    except ChallengeRequired:
+        _raise_challenge_error()
+    except LoginRequired:
+        logger.error("Instagram session expired. Clearing session file.")
+        global _client
+        _client = None
+        Path(config.IG_SESSION_FILE).unlink(missing_ok=True)
         return []
-    except instaloader.exceptions.ConnectionException as exc:
-        logger.error("Connection error fetching @%s: %s", username, exc)
+    except ClientError as exc:
+        logger.error("Instagram client error for @%s: %s", username, exc)
         return []
     except Exception as exc:
-        logger.exception("Unexpected error loading profile @%s: %s", username, exc)
+        logger.exception("Unexpected error fetching @%s: %s", username, exc)
         return []
 
     posts: list[InstagramPost] = []
-    try:
-        for post in profile.get_posts():
-            taken_at = post.date_utc.replace(tzinfo=timezone.utc)
+    for media in medias:
+        taken_at = media.taken_at
 
-            logger.debug(
-                "  post %s taken_at=%s → %s",
-                post.shortcode,
-                taken_at.isoformat(),
-                "✅ recent" if taken_at >= cutoff else "❌ too old",
-            )
+        # Normalize to UTC regardless of whether tzinfo is set
+        if taken_at.tzinfo is None:
+            # Naive datetime — instagrapi sometimes returns these; assume UTC
+            taken_at = taken_at.replace(tzinfo=timezone.utc)
+        else:
+            # Aware datetime — convert to UTC to be safe
+            taken_at = taken_at.astimezone(timezone.utc)
 
-            # Stop scanning once we're 2× the lookback window in the past
-            if taken_at < cutoff - timedelta(hours=lookback_hours):
-                break
+        logger.debug(
+            "  post %s taken_at=%s (cutoff=%s) → %s",
+            media.pk,
+            taken_at.isoformat(),
+            cutoff.isoformat(),
+            "✅ recent" if taken_at >= cutoff else "❌ too old",
+        )
 
-            if taken_at < cutoff:
-                continue
+        # Don't break — Instagram's feed order isn't strictly chronological.
+        # Use continue so we don't miss a recent post after an older one.
+        if taken_at < cutoff:
+            continue
 
-            posts.append(_post_to_dataclass(post, username))
-            time.sleep(config.IG_REQUEST_DELAY)
-
-    except instaloader.exceptions.ConnectionException as exc:
-        logger.error("Connection error while reading posts for @%s: %s", username, exc)
-    except Exception as exc:
-        logger.exception("Unexpected error reading posts for @%s: %s", username, exc)
+        posts.append(_media_to_post(media, username))
 
     logger.info(
-        "Fetched posts for @%s, %d within the last %.0fh.",
+        "Fetched %d post(s) for @%s, %d within the last %.0fh.",
+        len(medias),
         username,
         len(posts),
         lookback_hours,

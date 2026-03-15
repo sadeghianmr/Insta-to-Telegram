@@ -1,6 +1,5 @@
 """
 config.py — Load and validate all environment variables.
-No Instagram login required — instaloader scrapes public profiles directly.
 """
 
 import os
@@ -8,14 +7,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Instagram ──────────────────────────────────────────────────────────────────
-# Optional: set these to log in and avoid anonymous rate limits.
-# Leave blank to scrape public profiles without login.
-IG_USERNAME: str = os.getenv("IG_USERNAME", "")
-IG_PASSWORD: str = os.getenv("IG_PASSWORD", "")
-IG_SESSION_FILE: str = os.getenv("IG_SESSION_FILE", "session.json")
 
-# Comma-separated list of PUBLIC Instagram usernames to monitor
+# ── Instagram ──────────────────────────────────────────────────────────────────
+IG_USERNAME = os.getenv("IG_USERNAME", "")
+IG_PASSWORD = os.getenv("IG_PASSWORD", "")
+IG_SESSION_FILE = os.getenv("IG_SESSION_FILE", "session.json")
+
+# Comma-separated list of Instagram usernames to monitor
 # e.g. "natgeo,nasa,bbcnews"
 IG_TARGET_ACCOUNTS: list[str] = [
     acc.strip()
@@ -37,12 +35,16 @@ LOOKBACK_HOURS: float = float(os.getenv("LOOKBACK_HOURS", "24"))
 # ── Database ───────────────────────────────────────────────────────────────────
 DB_PATH: str = os.getenv("DB_PATH", "seen_posts.db")
 
+# ── Proxy (optional) ──────────────────────────────────────────────────────────
+# Format: "http://user:pass@host:port"
+PROXY: str = os.getenv("PROXY", "")
+
 # ── Misc ───────────────────────────────────────────────────────────────────────
 # Delay (seconds) between Telegram messages to respect rate limits
 TELEGRAM_SEND_DELAY: float = float(os.getenv("TELEGRAM_SEND_DELAY", "2"))
 
-# Delay (seconds) between Instagram requests to avoid rate limiting
-IG_REQUEST_DELAY: float = float(os.getenv("IG_REQUEST_DELAY", "3"))
+# Delay (seconds) between Instagram requests to avoid detection
+IG_REQUEST_DELAY: float = float(os.getenv("IG_REQUEST_DELAY", "5"))
 
 
 def validate():
