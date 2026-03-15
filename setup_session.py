@@ -85,18 +85,33 @@ def main():
 
     except ChallengeRequired:
         print("\n⚠️  Instagram requires a security challenge.")
-        print("   instagrapi will now try to resolve it automatically…")
+        print("   Check your email or SMS for a verification code.\n")
         try:
             cl.challenge_resolve(cl.last_json)
         except Exception as exc:
-            print(f"\n❌  Automatic challenge resolution failed: {exc}")
+            print(f"\n❌  Challenge resolution failed: {exc}")
             print(
-                "\n   Manual steps:\n"
+                "\n   Try these manual steps:\n"
                 "   1. Open Instagram on your phone\n"
                 "   2. Complete any security prompts\n"
                 "   3. Run this script again"
             )
             sys.exit(1)
+
+        # challenge_resolve may leave the session in a half-logged-in state.
+        # Call relogin() to fully authenticate with the resolved challenge.
+        print("\n🔄  Finalising login after challenge…")
+        try:
+            cl.relogin()
+        except Exception:
+            # relogin() is not always available; try explicit login instead
+            try:
+                cl.login(config.IG_USERNAME, config.IG_PASSWORD)
+            except Exception as exc2:
+                print(f"\n❌  Could not finalise login after challenge: {exc2}")
+                print("   The account may be temporarily restricted by Instagram.")
+                print("   Wait 1–2 hours, then try again.")
+                sys.exit(1)
 
     except FeedbackRequired:
         msg = cl.last_json.get("feedback_message", "No details available.")
@@ -109,17 +124,29 @@ def main():
         print(f"\n❌  Unexpected error: {exc}")
         sys.exit(1)
 
-    # ── Success ───────────────────────────────────────────────────────────────
-    cl.dump_settings(session_path)
-
-    # Verify the session works
-    print("\n✅  Logged in successfully! Verifying session…")
+    # ── Verify session is truly working ───────────────────────────────────────
+    print("\n✅  Login complete! Verifying session quality…")
+    session_ok = False
     try:
         info = cl.account_info()
-        print(f"   Verified as: @{info.username} ({info.full_name})")
-    except Exception as exc:
-        print(f"   ⚠️  Could not verify account info: {exc}")
+        print(f"   ✅  Verified as: @{info.username} ({info.full_name})")
+        session_ok = True
+    except Exception:
+        # Fallback: try timeline feed (less strict endpoint)
+        try:
+            cl.get_timeline_feed()
+            print("   ✅  Session verified via timeline feed.")
+            session_ok = True
+        except Exception as exc:
+            print(f"   ❌  Session verification failed: {exc}")
+            print("       The session is NOT usable. Do NOT run main.py yet.")
+            print("       Try logging into Instagram on your phone,")
+            print("       approve any security alerts, then run this script again.")
 
+    if not session_ok:
+        sys.exit(1)
+
+    cl.dump_settings(session_path)
     print(f"\n💾  Session saved to: {session_path}")
     print("\nNext steps:")
     print("  • Run locally:   python main.py --once")
