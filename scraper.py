@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from instagrapi import Client
-from instagrapi.exceptions import LoginRequired, ClientError
+from instagrapi.exceptions import LoginRequired, ClientError, ChallengeRequired
 
 import config
 
@@ -63,16 +63,45 @@ def _get_client() -> Client:
             logger.info("Logged in using saved session.")
             _client = cl
             return _client
+        except ChallengeRequired:
+            _raise_challenge_error()
         except Exception as exc:
             logger.warning("Saved session invalid (%s), re-logging in.", exc)
             session_path.unlink(missing_ok=True)
 
     # Fresh login
-    cl.login(config.IG_USERNAME, config.IG_PASSWORD)
+    try:
+        cl.login(config.IG_USERNAME, config.IG_PASSWORD)
+    except ChallengeRequired:
+        _raise_challenge_error()
+
     cl.dump_settings(session_path)
     logger.info("Logged in fresh and session saved.")
     _client = cl
     return _client
+
+
+def _raise_challenge_error():
+    """
+    Instagram requires a security challenge (new IP / device).
+    Print a clear, actionable message and exit — no point retrying automatically.
+    """
+    msg = (
+        "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "❌  Instagram Security Challenge Required\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Instagram blocked the login because it doesn't recognise\n"
+        "this server's IP address.\n\n"
+        "Fix: copy your local session.json (which Instagram already\n"
+        "trusts) to the server:\n\n"
+        "  scp /path/to/Insta-to-Telegram/session.json \\\n"
+        "      user@YOUR_SERVER:/path/to/Insta-to-Telegram/session.json\n\n"
+        "Then re-run the bot on the server.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    logger.error(msg)
+    raise SystemExit(1)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -132,6 +161,8 @@ def fetch_recent_posts(username: str, lookback_hours: float = 24) -> list[Instag
         user_id = cl.user_id_from_username(username)
         # Fetch up to 30 recent posts; filter by time
         medias = cl.user_medias(user_id, amount=30)
+    except ChallengeRequired:
+        _raise_challenge_error()
     except LoginRequired:
         logger.error("Instagram session expired. Clearing session file.")
         global _client
