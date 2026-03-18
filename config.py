@@ -9,7 +9,7 @@ load_dotenv()
 
 
 # Delay (seconds) between Instagram requests to avoid blocks
-IG_REQUEST_DELAY: float = float(os.getenv("IG_REQUEST_DELAY", "5"))
+IG_REQUEST_DELAY: float = float(os.getenv("IG_REQUEST_DELAY", "30"))
 
 # Comma-separated list of Instagram usernames to monitor
 # e.g. "natgeo,nasa,bbcnews"
