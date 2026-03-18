@@ -56,6 +56,9 @@ async def run_job():
         for post in new_posts:
             mark_seen(post.post_id, post.username, post.taken_at)
 
+        # Wait before checking the next account to avoid IP blocks
+        await asyncio.sleep(config.IG_REQUEST_DELAY)
+
     # Periodic DB cleanup
     cleanup_old_entries(older_than_hours=72)
     logger.info("=== Job finished ===")

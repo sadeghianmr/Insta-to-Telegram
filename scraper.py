@@ -69,8 +69,11 @@ def fetch_recent_posts(username: str, lookback_hours: float = 24) -> list[Instag
     except instaloader.exceptions.ProfileNotExistsException:
         logger.error("Profile @%s does not exist or is private/blocked.", username)
         return []
+    except instaloader.exceptions.ConnectionException as exc:
+        logger.error("Failed to fetch profile @%s: %s (Likely a temporary Instagram rate limit).", username, exc)
+        return []
     except Exception as exc:
-        logger.exception("Failed to fetch profile @%s: %s", username, exc)
+        logger.error("Failed to fetch profile @%s: %s", username, exc)
         return []
 
     posts: list[InstagramPost] = []
