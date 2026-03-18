@@ -6,11 +6,11 @@ Automatically reposts recent (last 24 h) Instagram public account posts to your 
 
 ## 📁 Project Structure
 
-```
+```text
 Insta-to-Telegram/
 ├── config.py          # Environment variable loading & validation
 ├── db.py              # SQLite deduplication tracker
-├── scraper.py         # Instagram scraping (instagrapi)
+├── scraper.py         # Instagram fetching via Instaloader (anonymous)
 ├── sender.py          # Telegram message sending (async)
 ├── main.py            # Scheduler & entry point
 ├── .env.example       # Config template → copy to .env
@@ -41,13 +41,12 @@ Then open `.env` and fill in:
 
 | Variable | Description |
 |---|---|
-| `IG_USERNAME` | Your Instagram login username |
-| `IG_PASSWORD` | Your Instagram login password |
+| `IG_REQUEST_DELAY` | Seconds to wait between scrapes to avoid blocks (Default: 5) |
 | `IG_TARGET_ACCOUNTS` | Comma-separated list of accounts to monitor |
 | `TELEGRAM_BOT_TOKEN` | Token from [@BotFather](https://t.me/BotFather) |
 | `TELEGRAM_CHANNEL_ID` | Your channel `@username` or numeric ID |
 
-> **Tip:** Use a dedicated Instagram account for scraping to protect your main account.
+> **Tip:** Instaloader scrapes public profiles anonymously. You do not need an Instagram account or password for this to work!
 
 ### 3. Add the bot to your Telegram channel
 In Telegram → your channel → Admins → add your bot with **Post Messages** permission.
@@ -94,8 +93,8 @@ All settings live in `.env`:
 
 ## ⚠️ Important Notes
 
-- **Instagram scraping**: Instagram may temporarily restrict accounts that make many requests. Use delays, and consider using a dedicated account + a residential proxy if you monitor many accounts.
-- **Session persistence**: The bot saves your Instagram session to `session.json` to avoid re-logging in on each run. This file contains sensitive credentials — keep it private!
+- **Anonymous Scraping**: Because this bot does not log in, it can only see **public** Instagram accounts.
+- **Rate Limiting**: Even without logging in, Instagram may temporarily block your IP if you refresh too often. Keep `CHECK_INTERVAL_HOURS` at 2 or higher, and `IG_REQUEST_DELAY` at 5+ seconds.
 - **Telegram limits**: The bot API supports files up to **50 MB**. Very large videos may fail — the bot will log the error and continue.
 - **Carousel albums**: Only the first 10 items are sent (Telegram's `sendMediaGroup` limit).
 

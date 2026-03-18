@@ -8,10 +8,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# ── Instagram ──────────────────────────────────────────────────────────────────
-IG_USERNAME = os.getenv("IG_USERNAME", "")
-IG_PASSWORD = os.getenv("IG_PASSWORD", "")
-IG_SESSION_FILE = os.getenv("IG_SESSION_FILE", "session.json")
+# Delay (seconds) between Instagram requests to avoid blocks
+IG_REQUEST_DELAY: float = float(os.getenv("IG_REQUEST_DELAY", "5"))
 
 # Comma-separated list of Instagram usernames to monitor
 # e.g. "natgeo,nasa,bbcnews"
@@ -42,9 +40,6 @@ PROXY: str = os.getenv("PROXY", "")
 # ── Misc ───────────────────────────────────────────────────────────────────────
 # Delay (seconds) between Telegram messages to respect rate limits
 TELEGRAM_SEND_DELAY: float = float(os.getenv("TELEGRAM_SEND_DELAY", "2"))
-
-# Delay (seconds) between Instagram requests to avoid detection
-IG_REQUEST_DELAY: float = float(os.getenv("IG_REQUEST_DELAY", "5"))
 
 
 def validate():
