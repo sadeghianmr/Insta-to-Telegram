@@ -78,32 +78,47 @@ async def send_post(bot: Bot, post: InstagramPost):
             elif post.media_type == "video" and post.media_urls:
                 path = await _download(post.media_urls[0], session, ".mp4")
                 temp_files.append(path)
-                thumb_path: str | None = None
-                if post.thumbnail_url:
-                    thumb_path = await _download(post.thumbnail_url, session, ".jpg")
-                    temp_files.append(thumb_path)
-                with open(path, "rb") as f:
-                    thumb_file = open(thumb_path, "rb") if thumb_path else None
-                    try:
-                        await bot.send_video(
-                            chat_id=channel,
-                            video=f,
-                            thumbnail=thumb_file,
-                            caption=caption,
-                            parse_mode=ParseMode.HTML,
-                            supports_streaming=True,
-                        )
-                    finally:
-                        if thumb_file:
-                            thumb_file.close()
+                
+                if os.path.getsize(path) > 49 * 1024 * 1024:
+                    logger.warning("Video too large (%.1f MB). Falling back to text.", os.path.getsize(path)/1024/1024)
+                    await bot.send_message(
+                        chat_id=channel,
+                        text=f"🎥 <b>[Video too large for Telegram]</b>\nWatch here: {post.permalink}\n\n{caption}",
+                        parse_mode=ParseMode.HTML,
+                    )
+                else:
+                    thumb_path: str | None = None
+                    if post.thumbnail_url:
+                        thumb_path = await _download(post.thumbnail_url, session, ".jpg")
+                        temp_files.append(thumb_path)
+                    with open(path, "rb") as f:
+                        thumb_file = open(thumb_path, "rb") if thumb_path else None
+                        try:
+                            await bot.send_video(
+                                chat_id=channel,
+                                video=f,
+                                thumbnail=thumb_file,
+                                caption=caption,
+                                parse_mode=ParseMode.HTML,
+                                supports_streaming=True,
+                            )
+                        finally:
+                            if thumb_file:
+                                thumb_file.close()
 
             # ── Carousel / Album ───────────────────────────────────────────
             elif post.media_type == "carousel" and post.media_urls:
                 media_group = []
+                too_large = False
                 for i, url in enumerate(post.media_urls[:10]):  # Telegram max = 10
                     ext = ".mp4" if "video" in url else ".jpg"
                     path = await _download(url, session, ext)
                     temp_files.append(path)
+                    
+                    if os.path.getsize(path) > 49 * 1024 * 1024:
+                        too_large = True
+                        break
+
                     cap_text = caption if i == 0 else None
                     if ext == ".mp4":
                         media_group.append(
@@ -121,7 +136,16 @@ async def send_post(bot: Bot, post: InstagramPost):
                                 parse_mode=ParseMode.HTML if cap_text else None,
                             )
                         )
-                await bot.send_media_group(chat_id=channel, media=media_group)
+                
+                if too_large:
+                    logger.warning("Carousel contains a video too large for Telegram. Falling back to text.")
+                    await bot.send_message(
+                        chat_id=channel,
+                        text=f"🎞 <b>[Album too large for Telegram]</b>\nView here: {post.permalink}\n\n{caption}",
+                        parse_mode=ParseMode.HTML,
+                    )
+                else:
+                    await bot.send_media_group(chat_id=channel, media=media_group)
 
             else:
                 logger.warning("Unknown media type '%s' for post %s", post.media_type, post.post_id)
